@@ -2,26 +2,50 @@
 
 namespace App\Http\Controllers;
 
-use App\Services\ZakekeService;
-use Illuminate\Http\Request;
+use GuzzleHttp\Client;
+use GuzzleHttp\Exception\GuzzleException;
+use Illuminate\Support\Facades\Cache;
 
 class ProductController extends Controller
 {
-    protected ZakekeService $zakekeService;
-
-    public function __construct(ZakekeService $zakekeService)
+    public function getProducts()
     {
-        $this->zakekeService = $zakekeService;
-    }
+        try {
+            // Check if the token is cached
+            if (Cache::has('zakeke_token')) {
+                $token = Cache::get('zakeke_token');
+            } else {
+                // Fetch the token from ZakekeAuthController API
+                $client = new Client();
+                $response = $client->request('GET', url('/api/zakeke/token'));
+                $tokenData = json_decode($response->getBody(), true);
 
-    public function getProducts(Request $request)
-    {
-        // Fetch the products from Zakeke API
-        $products = $this->zakekeService->getProducts();
+                if (!isset($tokenData['token'])) {
+                    return response()->json(['error' => 'Unable to authenticate with Zakeke API'], 500);
+                }
 
-        // Return the products as JSON
-        return response()->json($products);
+                $token = $tokenData['token'];
+
+                // Cache the token for 1 hour
+                Cache::put('zakeke_token', $token, now()->addHour());
+            }
+
+            // Fetch products from Zakeke
+            $client = new Client();
+            $response = $client->request('GET', env('ZAKEKE_API_BASE_URL') . '/v2/products', [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $token,
+                ],
+            ]);
+
+            $products = json_decode($response->getBody(), true);
+
+            return response()->json($products);
+
+        } catch (GuzzleException $e) {
+            return response()->json(['error' => 'Guzzle error: ' . $e->getMessage()], 500);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Error: ' . $e->getMessage()], 500);
+        }
     }
 }
-
-
